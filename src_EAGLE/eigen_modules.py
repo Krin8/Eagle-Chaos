@@ -149,13 +149,21 @@ class EigenLoss(nn.Module):
         self.eigen_cluster = cfg.eigen_cluster
 
     def normalized_laplacian(self, L, D):
-        D_inv_sqrt = torch.inverse(torch.sqrt(D))
-        D_inv_sqrt = D_inv_sqrt.diagonal(dim1=-2, dim2=-1)
-        
+        # convert to float32 for stability
+        D_float = D.float()
+
+        # extract diagonal values
+        D_diag = D_float.diagonal(dim1=-2, dim2=-1)
+
+        # compute D^{-1/2} safely
+        D_inv_sqrt = 1.0 / torch.sqrt(D_diag + 1e-6)
+
+        # rebuild diagonal matrix
         D_inv_sqrt_diag = torch.diag_embed(D_inv_sqrt)
 
-        L_norm = torch.bmm(D_inv_sqrt_diag, torch.bmm(L, D_inv_sqrt_diag))
-        
+        # compute normalized Laplacian
+        L_norm = torch.bmm(D_inv_sqrt_diag, torch.bmm(L.float(), D_inv_sqrt_diag))
+
         return L_norm
 
     def batch_trace(self,tensor):
@@ -164,7 +172,8 @@ class EigenLoss(nn.Module):
         return trace_values
 
     def eigen(self, lap, K):
-        eigenvalues_all, eigenvectors_all = torch.linalg.eigh(lap, UPLO='U')
+        lap_float = lap.float()  # convert to float32
+        eigenvalues_all, eigenvectors_all = torch.linalg.eigh(lap_float, UPLO='U')
         eigenvalues = eigenvalues_all[:, :K]
         eigenvectors = eigenvectors_all[:, :, :K]    
         eigenvalues = eigenvalues.float()
@@ -264,27 +273,29 @@ class EigenLoss(nn.Module):
         return lap
 
     def lalign(self, img, Y, code, adj, adj_code, code_neg_torch, neg_sample=5):
-        if code_neg_torch is None:
-            if Y.shape[1] == 196:
-                img = F.interpolate(img, size=(14, 14), mode='bilinear', align_corners=False).permute(0,2,3,1)
-            else:
-                img = F.interpolate(img, size=(28, 28), mode='bilinear', align_corners=False).permute(0,2,3,1)
-            
-            color_W = self.color_affinity(img)
-            nor_adj_lap = self.laplacian(adj_code, color_W)
-                
-            nor_adj_lap_detach = torch.clone(nor_adj_lap.detach()) 
-            eigenvalues, eigenvectors = self.eigen(nor_adj_lap_detach, K=self.eigen_cluster) 
-            return eigenvectors
+    
+        # Resize image depending on feature size
+        if Y.shape[1] == 196:
+            img = F.interpolate(img, size=(14, 14), mode='bilinear', align_corners=False).permute(0,2,3,1)
         else:
-            adj_lap = self.laplacian_matrix(img, adj, image_color_lambda=0.1) 
+            img = F.interpolate(img, size=(28, 28), mode='bilinear', align_corners=False).permute(0,2,3,1)
 
-            max_values = code.max(dim=-1, keepdim=True)[0].max(dim=-2, keepdim=True)[0]
-            code_norm = code / max_values 
+        # Compute color affinity
+        color_W = self.color_affinity(img)
 
-            code_neg_torch = code_neg_torch.reshape(code_neg_torch.shape[0],code_neg_torch.shape[1],code_neg_torch.shape[2], -1).permute(0,1,3,2) # [5, B, 121, 512]
+        # Compute Laplacian
+        if code_neg_torch is None:
+            lap = self.laplacian(adj_code, color_W)
+        else:
+            lap = self.laplacian_matrix(img, adj, image_color_lambda=0.1)
 
-            return eigenvectors
+        # Detach + convert to float32
+        lap = lap.detach().float()
+
+        # Compute eigenvectors
+        eigenvalues, eigenvectors = self.eigen(lap, K=self.eigen_cluster)
+
+        return eigenvectors
     
     def forward(self, img, feat, code, corr_feats_pos, code_neg_torch, neg_sample=5):
         feat = F.normalize(feat, p=2, dim=-1)

@@ -4,11 +4,12 @@ from data import *
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from datetime import datetime
+import matplotlib.pyplot as plt
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer
-from pytorch_lightning.utilities.seed import seed_everything
+from pytorch_lightning import seed_everything
 import torch.multiprocessing
 import seaborn as sns
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -29,34 +30,9 @@ os.environ["WANDB__SERVICE_WAIT"] = "300"
 
 
 def get_class_labels(dataset_name):
-    if dataset_name.startswith("cityscapes"):
-        return [
-            'road', 'sidewalk', 'parking', 'rail track', 'building',
-            'wall', 'fence', 'guard rail', 'bridge', 'tunnel',
-            'pole', 'polegroup', 'traffic light', 'traffic sign', 'vegetation',
-            'terrain', 'sky', 'person', 'rider', 'car',
-            'truck', 'bus', 'caravan', 'trailer', 'train',
-            'motorcycle', 'bicycle']
-    elif dataset_name == "cocostuff27":
-        return [
-            "electronic", "appliance", "food", "furniture", "indoor",
-            "kitchen", "accessory", "animal", "outdoor", "person",
-            "sports", "vehicle", "ceiling", "floor", "food",
-            "furniture", "rawmaterial", "textile", "wall", "window",
-            "building", "ground", "plant", "sky", "solid",
-            "structural", "water"]
-    elif dataset_name == "voc":
-        return [
-            'background',
-            'aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
-            'bus', 'car', 'cat', 'chair', 'cow',
-            'diningtable', 'dog', 'horse', 'motorbike', 'person',
-            'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor']
-    elif dataset_name == "potsdam":
-        return [
-            'roads and cars',
-            'buildings and clutter',
-            'trees and vegetation']
+    
+    if dataset_name == "chaos":
+        return ['background', 'liver', 'right kidney', 'left kidney', 'spleen']
     else:
         raise ValueError("Unknown Dataset {}".format(dataset_name))
     
@@ -68,6 +44,7 @@ def scheduler(cfg, step):
 
 class LitUnsupervisedSegmenter(pl.LightningModule):
     def __init__(self, n_classes, cfg):
+        self.validation_outputs = {}
         super().__init__()
         self.cfg = cfg
         self.n_classes = n_classes
@@ -116,10 +93,7 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
 
         self.automatic_optimization = False
 
-        if self.cfg.dataset_name.startswith("cityscapes"):
-            self.label_cmap = create_cityscapes_colormap()
-        else:
-            self.label_cmap = create_pascal_label_colormap()
+        self.label_cmap = create_chaos_colormap()
 
         self.val_steps = 0
         
@@ -259,9 +233,10 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
         linear_logits = self.linear_probe(detached_code_kk)
         linear_logits = F.interpolate(linear_logits, label.shape[-2:], mode='bilinear', align_corners=False)
         linear_logits = linear_logits.permute(0, 2, 3, 1).reshape(-1, self.n_classes)
-        linear_loss = self.linear_probe_loss_fn(linear_logits[mask], flat_label[mask]).mean()
-        loss += linear_loss
-        self.log('loss/linear', linear_loss, **log_args)
+        if mask.any():
+            linear_loss = self.linear_probe_loss_fn(linear_logits[mask], flat_label[mask]).mean()
+            loss += linear_loss
+            self.log('loss/linear', linear_loss, **log_args)
 
         cluster_loss, cluster_probs = self.cluster_probe(detached_code_kk, None)
         loss += cluster_loss
@@ -307,14 +282,15 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
             cluster_preds = cluster_preds.argmax(1)
             self.cluster_metrics.update(cluster_preds, label)
 
-            return {
+            self.validation_outputs = {
                 'img': img[:self.cfg.n_images].detach().cpu(),
                 'linear_preds': linear_preds[:self.cfg.n_images].detach().cpu(),
                 "cluster_preds": cluster_preds[:self.cfg.n_images].detach().cpu(),
-                "label": label[:self.cfg.n_images].detach().cpu()}
+                "label": label[:self.cfg.n_images].detach().cpu()
+            }
 
-    def validation_epoch_end(self, outputs) -> None:
-        super().validation_epoch_end(outputs)
+    def on_validation_epoch_end(self) -> None:
+        import matplotlib.pyplot as plt
         with torch.no_grad():
             tb_metrics = {
                 **self.linear_metrics.compute(training=True),
@@ -323,8 +299,7 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
 
             if self.trainer.is_global_zero and not self.cfg.submitting_to_aml:
                 #output_num = 0
-                output_num = random.randint(0, len(outputs) -1)
-                output = {k: v.detach().cpu() for k, v in outputs[output_num].items()}
+                output = {k: v.detach().cpu() for k, v in self.validation_outputs.items()}
 
                 fig, ax = plt.subplots(4, self.cfg.n_images, figsize=(self.cfg.n_images * 3, 4 * 3))
                 for i in range(self.cfg.n_images):
@@ -338,7 +313,10 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
                 ax[3, 0].set_ylabel("Cluster Probe", fontsize=16)
                 remove_axes(ax)
                 plt.tight_layout()
-                add_plot(self.logger.experiment.log, "plot_labels", self.global_step)
+                try:
+                    add_plot(self.logger.experiment.log, "plot_labels", self.global_step)
+                except Exception as e:
+                    print("WandB plot failed:", e)
 
                 if self.cfg.has_labels:
                     fig = plt.figure(figsize=(13, 10))
@@ -395,16 +373,16 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
                     ax[1].tick_params(axis='x', labelrotation=90)
 
                     plt.tight_layout()
-                    add_plot(tb_logger.log, "label frequency", self.global_step)
+                    import wandb
+
+                    import matplotlib.pyplot as plt
+
+                    fig = plt.gcf()
+                    wandb.log({"label_frequency": wandb.Image(fig)})
+                    plt.close(fig)
 
             if self.global_step > 2:
                 self.log_dict(tb_metrics)
-
-                if self.trainer.is_global_zero and self.cfg.azureml_logging:
-                    from azureml.core.run import Run
-                    run_logger = Run.get_context()
-                    for metric, value in tb_metrics.items():
-                        run_logger.log(metric, value)
 
             self.linear_metrics.reset()
             self.cluster_metrics.reset()
@@ -434,7 +412,7 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
             return net_optim, linear_probe_optim, cluster_probe_optim, cluster_eigen_optim, cluster_eigen_optim_aug
 
 
-@hydra.main(config_path="configs", config_name="train_config_cocostuff.yml")
+@hydra.main(config_path="configs", config_name="train_config.yaml")
 def my_app(cfg: DictConfig) -> None:
     OmegaConf.set_struct(cfg, False)
     print(OmegaConf.to_yaml(cfg))
@@ -484,7 +462,7 @@ def my_app(cfg: DictConfig) -> None:
         mask=True,
     )
     
-    if cfg.dataset_name == "voc":
+    if cfg.dataset_name in ("voc", "chaos"):   # was: == "voc"
         val_loader_crop = None
     else:
         val_loader_crop = "center"
@@ -515,13 +493,11 @@ def my_app(cfg: DictConfig) -> None:
         name=cfg.log_dir+"_"+exp_name, project=cfg.project_name, entity=cfg.entity
     )
 
-    if cfg.dataset_name == 'cocostuff27':
-        gpu_args = dict(gpus=[0,1], accelerator='ddp', val_check_interval=cfg.val_freq)
-    else:
-        gpu_args = dict(gpus=[0], accelerator='ddp', val_check_interval=cfg.val_freq)
-
-    if gpu_args["val_check_interval"] > len(train_loader) // 4:
-        gpu_args.pop("val_check_interval")
+    gpu_args = dict(
+    accelerator='gpu',
+    devices=1,
+    val_check_interval=cfg.val_freq
+)
 
     trainer = Trainer(
         log_every_n_steps=cfg.scalar_log_freq,
@@ -530,8 +506,8 @@ def my_app(cfg: DictConfig) -> None:
         callbacks=[
             ModelCheckpoint(
                 dirpath=join(checkpoint_dir, prefix),
-                every_n_train_steps=100,
-                save_top_k=5,
+                every_n_train_steps=500,
+                save_top_k=15,
                 monitor="test/cluster/mIoU",
                 mode="max",
                 filename='{epoch:02d}-{step:08d}-{test/cluster/mIoU:.2f}'

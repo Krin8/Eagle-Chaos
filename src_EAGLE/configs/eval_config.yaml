@@ -1,0 +1,26 @@
+output_root: '../'
+pytorch_data_dir: '/content/drive/MyDrive/EAGLE/src_EAGLE/pytorch_data_dir'
+experiment_name: "chaos"
+res: 224
+batch_size: 8
+num_workers: 2
+run_picie: False
+run_crf: True
+run_prediction: True
+dark_mode: True
+use_ddp: False
+
+dino_patch_size: 8
+dino_feat_type: "feat"
+projection_type: "nonlinear"
+model_type: "vit_small"
+pretrained_weights: ~
+dataset_name: "chaos"
+
+model_paths:
+  - '/content/drive/.shortcut-targets-by-id/1MxE7v7JrMeInzuP5EZtjusOZ1WOjuE-6/EAGLE/checkpoints/chaos/chaos_Apr09_20-09-06_vit_small_chaos_EAGLE/epoch=01-step=00002100-test/cluster/mIoU=13.89.ckpt'
+
+hydra:
+  run:
+    dir: "."
+  output_subdir: ~

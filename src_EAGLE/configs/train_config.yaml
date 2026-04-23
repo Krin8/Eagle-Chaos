@@ -1,44 +1,49 @@
 output_root: '../'
-pytorch_data_dir: 'pytorch_data_dir'
-experiment_name: "cityscapes_EAGLE"
-log_dir: "cityscapes"
-dataset_name: "cityscapes"
-azureml_logging: True
+pytorch_data_dir: 'D:\Chaos\EAGLE\src_EAGLE\pytorch_data_dir'
+experiment_name: "chaos_EAGLE"
+log_dir: "chaos"
+dataset_name: "chaos"
+azureml_logging: False
 submitting_to_aml: False
 
-# wandb params
-project_name: "EAGLE" 
-entity: "your_ID"
+# CHAOS dataset params
+chaos_modality: "all"
+chaos_n_classes: 5
 
+# wandb params
+project_name: "EAGLE"
+entity: "navneetbavineni-shi"
+trainer:
+  precision: 32
 # Loader params
-num_workers: 24
-max_steps: 6000
+num_workers: 0
+num_neighbors: 5
+max_steps: 100000
 batch_size: 32
-step_schedulers: 380
+step_schedulers: 200
 dir_dataset_name: ~
 dir_dataset_n_classes: 5
-
-has_labels: False
-crop_type: 'five'
+has_labels: True
+crop_type: "center"
 crop_ratio: .5
 res: 224
 loader_crop_type: "center"
 
 # lr
-lr_linear: 5e-3 
-lr_cluster: 3e-3 
-lr_cluster_eigen: 5e-4
+lr_linear: 1e-3
+lr_cluster: 5e-3
+lr_cluster_eigen: 5e-5
 
 # eigen
 eigen_cluster: 4
-eigen_cluster_out: 28
+eigen_cluster_out: 5
 
 # Model Params
 use_head: True
-extra_clusters: 1
+extra_clusters: 0
 use_true_labels: False
 use_recalibrator: False
-model_type: "vit_base"
+model_type: "vit_small"
 arch: "dino"
 use_fit_model: False
 dino_feat_type: "KK"
@@ -55,27 +60,23 @@ pretrained_weights: ~
 stabalize: True
 stop_at_zero: True
 shift_value: 3.5
-shift_bias: 0.11
+shift_bias: 0
 
 # Feature Contrastive params
 pointwise: True
-feature_samples: 28
+feature_samples: 11
 neg_samples: 5
 aug_alignment_weight: 0.0
-
 correspondence_weight: 1.0
-
 local_pos_weight: 0.85
 local_pos_aug_weight: 0.85
 global_loss_weight: 0.7
 contrastive_temp: 0.07
-momentum_limit: 0.7
+momentum_limit: 0.9
 centroid_mode: "prototype"
-
-neg_inter_weight: 1.0
-pos_inter_weight: 0.18
+neg_inter_weight: 0.63
+pos_inter_weight: 0.25
 pos_intra_weight: 1
-
 rec_weight: 0.0
 repulsion_weight: 0.0
 
@@ -91,17 +92,13 @@ crf_samples: 1000
 color_space: "rgb"
 
 reset_probe_steps: ~
-
 n_images: 4
 scalar_log_freq: 10
 checkpoint_freq: 100
 val_freq: 100
 hist_freq: 100
 
-
 hydra:
   run:
     dir: "."
   output_subdir: ~
-  #job_logging: "disabled"
-  #hydra_logging: "disabled"

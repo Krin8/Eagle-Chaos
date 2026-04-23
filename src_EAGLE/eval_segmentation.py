@@ -1,4 +1,12 @@
 from modules import *
+import torch
+from omegaconf import DictConfig
+from omegaconf.base import ContainerMetadata
+
+torch.serialization.add_safe_globals([
+    DictConfig,
+    ContainerMetadata
+])
 from data import *
 from collections import defaultdict
 from multiprocessing import Pool
@@ -53,7 +61,7 @@ def batched_crf(pool, img_tensor, prob_tensor):
     outputs = pool.map(_apply_crf, zip(img_tensor.detach().cpu(), prob_tensor.detach().cpu()))
     return torch.cat([torch.from_numpy(arr).unsqueeze(0) for arr in outputs], dim=0)
 
-@hydra.main(config_path="configs", config_name="eval_config.yml")
+@hydra.main(config_path="configs", config_name="eval_config.yaml")
 def my_app(cfg: DictConfig) -> None:
     pytorch_data_dir = cfg.pytorch_data_dir
 
@@ -61,7 +69,14 @@ def my_app(cfg: DictConfig) -> None:
         print(str(model_path))
         path_ = str(model_path)
 
-        model = LitUnsupervisedSegmenter.load_from_checkpoint(model_path)
+        ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
+        model = LitUnsupervisedSegmenter(
+        n_classes=ckpt["hyper_parameters"]["n_classes"],
+        cfg=ckpt["hyper_parameters"]["cfg"]
+    )
+        # Inspect once (optional)
+        print(ckpt.keys())
+
         loader_crop = "center"
 
         test_dataset = ContrastiveSegDataset(

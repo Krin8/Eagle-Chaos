@@ -1,5 +1,6 @@
 import io
-
+from data import ContrastiveSegDataset
+from modules import ContrastiveCRFLoss
 import PIL.Image
 import matplotlib.pyplot as plt
 import torch
@@ -32,7 +33,7 @@ def entropy(p):
     return -(p * torch.log(p)).sum(dim=1)
 
 
-@hydra.main(config_name="config.yml")
+@hydra.main(config_path="configs", config_name="train_config.yaml")
 def my_app(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     pytorch_data_dir = cfg.pytorch_data_dir
@@ -44,14 +45,22 @@ def my_app(cfg: DictConfig) -> None:
 
     np.random.seed(0)
     torch.random.manual_seed(0)
-
+    imsize = cfg.res
     small_imsize = imsize // 2
     transform_with_resize = T.Compose([T.Resize((small_imsize, small_imsize)), T.ToTensor(), normalize])
     label_transform_with_resize = T.Compose([T.Resize((small_imsize, small_imsize)), ToTargetTensor()])
 
     dataset = ContrastiveSegDataset(
-        pytorch_data_dir, dataset_name, "train+val", cfg.num_neighbors,
-        transform_with_resize, label_transform_with_resize, None, None, cfg)
+        pytorch_data_dir=pytorch_data_dir,
+        dataset_name=dataset_name,
+        crop_type=None,
+        image_set="all",   # ✅ correct
+        transform=transform_with_resize,
+        target_transform=label_transform_with_resize,
+        cfg=cfg,
+        aug_geometric_transform=None,
+        aug_photometric_transform=None,
+    )
 
     prefix = "crf/{}_{}".format(cfg.dataset_name, cfg.experiment_name)
     writer = SummaryWriter(
@@ -99,7 +108,7 @@ def my_app(cfg: DictConfig) -> None:
         img_t /= torch.tensor([100, 128 * 2, 128 * 2]).unsqueeze(0).unsqueeze(-1).unsqueeze(-1).cuda()
         return img_t
 
-    for i in tqdm(range(cfg.epochs)):
+    for i in tqdm(range(cfg.max_steps)):
 
         code = net.forward(img)
         if cfg.color_space == "rgb":
@@ -140,7 +149,7 @@ def my_app(cfg: DictConfig) -> None:
                     plot_img = (plot_img - plot_img.min()) / (plot_img.max() - plot_img.min())
                     ax[0, idx].imshow(plot_img.cpu())
                     if not continuous:
-                        ax[1, idx].imshow(mark_boundaries(plot_img.cpu(), code.argmax(1)[idx].cpu().numpy()))
+                        ax[1, idx].imshow(mark_boundaries(plot_img.cpu().numpy(), code.argmax(1)[idx].cpu().numpy()))
                     else:
                         X_code = code[idx].permute(1, 2, 0).reshape(-1, dim).cpu()
                         projected_code = PCA(n_components=3).fit_transform(X_code) \
